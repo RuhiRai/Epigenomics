@@ -1,3 +1,21 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+plot(cars)
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+######Sources USed:
 ######https://www.bioconductor.org/help/workflows/rnaseqGene/
 ######http://www.gettinggeneticsdone.com/2015/12/tutorial-rna-seq-differential.html
 ######https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4972086/
@@ -5,15 +23,44 @@
 ######https://bioc.ism.ac.jp/packages/2.14/bioc/vignettes/DESeq2/inst/doc/beginner.pdf
 ######https://hms-dbmi.github.io/scw/differential-expression.html
 
+#Author RRai
 
+#Purpose: To create Gene Signature panel for Epigenomic Mechanisms of Interest #(HATi HDACa HDACi HMTi HDMTi)
 
+#title: Epigenomic RNASeq Analysis to find signature genes 
+
+#Input Files 
+--Gene Annotation File: gencodev26annotation.gtf
+--Alignement Files: BAM files (.bam)
+--Sample Information: Sample Sheet (.csv)
+
+#Output
+#se: Read Counts by sample for each gene
+#dds: Output of Differential Expression Pipepline
+#res: Estimated log2 fold changes and p values 
+#rld: The regularized-logarithm transformation or rlog of count data
+
+#Required libraries
+library("Rsamtools")
+library(DESeq2)
+library("GenomicFeatures")
+library("BiocParallel")
+library(biomaRt)
+library(pheatmap)
+library( "gplots" )
+library( "RColorBrewer" )
+library(dplyr)
+library("AnnotationDbi")
+library("org.Hs.eg.db")
+library(ggplot2)
+library(limma)
+library(VennDiagram)
+##Setting up the work directory and location of input files
 
 setwd("D:/Batch3_4_Alignment")
 indir <- file.path(".")
 list.files(indir)
-
 csvfile <- file.path(indir, "SampleSheetBatch234_HMTi_withVC_CAH.csv")
-
 sampleTable <- read.csv(csvfile, row.names = 1)
 sampleTable
 filenames <- file.path(indir, paste0(sampleTable$SampleID, ".alignments.bam"))
@@ -22,7 +69,9 @@ library("Rsamtools")
 bamfiles <- BamFileList(filenames)
 seqinfo(bamfiles[1])
 #seqlevelsStyle(bamfiles)
-library("GenomicFeatures")
+
+####Read counts
+#library("GenomicFeatures")
 gtffile <- file.path(indir,"gencodev26annotation.gtf")
 txdb <- makeTxDbFromGFF(gtffile, format = "gtf", circ_seqs = character())
 txdb
@@ -41,7 +90,7 @@ colData(se)
 colData(se) <- DataFrame(sampleTable)
 colData(se)
 #dds <- DESeqDataSet(se, design = ~ Description + SampleID)
-library(DESeq2)
+#library(DESeq2)
 dds <- DESeqDataSet(se, design = ~ EpiMechanism)
 countdata <- assay(se)
 head(countdata, 3)
@@ -49,10 +98,13 @@ dds <- dds[ rowSums(counts(dds)) > 1, ]
 nrow(dds)
 dds = DESeq(dds)
 dds
-#copydds <- dds
+###Splitting the rownames after the "." to make it biomart readable.
+
 rownames(dds) <- sapply( strsplit( rownames(dds), split="\\." ), "[", 1 )
-#copydds
-library(biomaRt)
+
+#library(biomaRt)
+#Query biomart for genes form dds, add column to get gene names from ensemble Id
+
 mart <- useMart(biomart = 'ensembl', dataset = 'hsapiens_gene_ensembl')
 bm.query <- getBM(values=rownames(dds),attributes=c("ensembl_gene_id", "external_gene_name"),filters=c("ensembl_gene_id"),mart=mart)
 genes <- list(ids=rownames(dds),names=bm.query[match(rownames(dds), bm.query$ensembl_gene_id),]$external_gene_name)
@@ -60,38 +112,40 @@ genes
 rownames(dds) <- make.unique(as.character(genes$names))
 dds
 
+#Making column names shorter
 cell.labels <- substr(colnames(dds),12,18)
 cell.labels
 colnames(dds)
 colnames(dds) <- cell.labels
 colnames(dds)
 dds
+#rlog transformation of count data for PCA type analysis
 rld <- rlog(dds, blind = FALSE)
 head(assay(rld), 3)
-library( "genefilter" )
+
+#library( "genefilter" )
+
+#HeatMap plots
 topVarGenes <- head(order(rowVars(assay(rld)), decreasing = TRUE), 50)
 library(pheatmap)
 mat  <- assay(rld)[ topVarGenes, ]
 mat  <- mat - rowMeans(mat)
 anno <- as.data.frame(colData(rld)[, c("EpiMechanism","Dose")])
 pheatmap(mat, annotation_col = anno)
-library( "gplots" )
-library( "RColorBrewer" )
+
+#library( "gplots" )
+#library( "RColorBrewer" )
 
 heatmapData<-heatmap.2( assay(rld)[ topVarGenes, ],scale="row",
 trace="none",dendrogram="column",
 col = colorRampPalette( rev(brewer.pal(9, "RdBu")) )(255), margins = c(7,7), cexCol = .7, cexRow = .5, returnData = TRUE)
+#Saving heatmap data capturing information on top 50 genes
 heatmapinfo <- heatmapData$carpet
 write.csv(heatmapinfo, file = "D:/Batch3_4_Alignment/Batch234HighDose/AllgrpCAH/HMTi/top50variableGenesHMTi_withVC.csv")
-HATi_noVC_CAH.csv
+
 ###############################################################
-dds <- DESeqDataSet(se, design = ~ EpiMechanism)
-countdata <- assay(se)
-head(countdata, 3)
-dds <- dds[ rowSums(counts(dds)) > 1, ]
-nrow(dds)
-dds = DESeq(dds)
-dds
+###Building the results table for log fold change and p values
+
 res = results(dds)
 res = res[order(res$pvalue),]
 summary(res)
@@ -100,9 +154,11 @@ table(res.05$padj < 0.05)
 sum(res$pvalue < 0.05, na.rm=TRUE)
 sum(res$padj < 0.1, na.rm=TRUE)
 resSig <- subset(res, padj < 0.1)
-library(dplyr)
-library("AnnotationDbi")
-library("org.Hs.eg.db")
+#library(dplyr)
+#library("AnnotationDbi")
+#library("org.Hs.eg.db")
+#Adding gene names and entrezid to make it more human readable 
+
 resSig$ensembl <- sapply( strsplit( rownames(resSig), split="\\." ), "[", 1 )
 head(resSig)
 ensembl = useMart( "ensembl", dataset = "hsapiens_gene_ensembl" )
@@ -115,6 +171,8 @@ resSig$entrez <- genemap$entrezgene[ idx ]
 resSig$hgnc_symbol <- genemap$hgnc_symbol[ idx ]
 head(resSig[ order(resSig$log2FoldChange), ])
 
+#sorting up regulated and down regulated genes based on fold change
+
 downRegGenes <- resSig[order(resSig$log2FoldChange), ]
 write.csv(downRegGenes, file = "D:/Batch3_4_Alignment/Batch234HighDose/AllgrpCAH/HMTi/HMTi_withVCDownRegGenes.csv")
 upRegGenes <- resSig[order(resSig$log2FoldChange, decreasing = TRUE), ]
@@ -122,7 +180,7 @@ write.csv(upRegGenes, file = "D:/Batch3_4_Alignment/Batch234HighDose/AllgrpCAH/H
 write.csv(resSig, file = "D:/Batch3_4_Alignment/Batch234HighDose/AllgrpCAH/resPNE_HDACiwithVC.csv")
 
 ##########################################################################
-
+#Creating PCA plots and saving PCA data
 library(ggplot2)
 ggplot(pcaData, aes(PC1, PC2, color=EpiMechanism, shape=Dose)) +
 geom_point(size=3) +
@@ -134,6 +192,59 @@ write.csv(pcaData, file = "pcaData.csv")
 pcaData <- plotPCA(rld, intgroup=c("EpiMechanism", "Dose"), returnData=TRUE)
 percentVar <- round(100 * attr(pcaData, "percentVar"))
 
+##################################################################################################
+#This step uses res file from each Epimechanism to make one file that contains gene names from each mechanism in 5 colomns. We use this file "SignificantGenes.csv" to sort for common and unique genes
+
+#library(limma)
+#library(VennDiagram)
+setwd("D:/Batch3_4_Alignment/Batch234HighDose/AllgrpCAH/")
+genes <- read.csv("SigGenes_withVC.csv")
+venn.plot <- venn.diagram(list(genes$HATi, genes$HDACi), NULL, fill=c("red", "green"), alpha=c(0.5,0.5), cex = 2, cat.fontface=4, category.names=c("HATi", "HDACi"))
+grid.draw(venn.plot)
+IntersectHATi_HDACi <- intersect(genes$HATi, genes$HDACi)
+write.csv(vennIntersectHATi_HDACi, "vennIntersectHATi_HDACi.csv")
+UniqueHATi_HDACi <- unique(genes$HATi, genes$HDACi)
+write.csv(UniqueHATi_HDACi, "UniqueHATi_HDACi.csv")
+UniqueHMTi <- setdiff(genes1$PNE, genes1$HDMTi)
+
+
+dev.off()
+venn.plot <- venn.diagram(list(genes$HATi, genes$HDACi, genes$HDACa, genes$HMTi, genes$HDMTi), NULL, fill=c("red", "green", "pink", "yellow", "blue"), alpha=c(0.3,0.3,0.3,0.3,0.3), cex = 1.5, cat.fontface=4, category.names=c("HATi", "HDACi", "HDACa","HMTi", "HDMTi"), cat.dist = c(0.07, 0.07, 0.07,0.07, 0.07))
+
+genes1 <- read.csv("SignificantGenes.csv")
+head(genes1)
+genes1 <- na.omit(genes1)
+head(genes1)
+venn.plot <- venn.diagram(list(genes1$PNE, genes1$HDACi), NULL, fill=c("red", "green"), alpha=c(0.5,0.5), cex = 2, cat.fontface=4, category.names=c("PNE", "HDACi"))
+
+UniqueGenesHATi <- setdiff(genes3$HATi, genes3$CommonToAll)
+UniqueGenesHATia <- setdiff(UniqueGenesHATi, genes3$HDACi)
+UniqueGenesHATib <- setdiff(UniqueGenesHATia, genes3$HDMTi)
+GenesSignatureHATi <- setdiff(UniqueGenesHATib, genes3$HMTi)
+write.csv(GenesSignatureHATi, "GenesSignatureHATi.csv")
+
+
+
+UniqueGenesHDACi <- setdiff(genes3$HDACi, genes3$CommonToAll)
+UniqueGenesHDACia <- setdiff(UniqueGenesHDACi, genes3$HATi)
+UniqueGenesHDACib <- setdiff(UniqueGenesHDACia, genes3$HDMTi)
+GenesSignatureHDACi <- setdiff(UniqueGenesHDACib, genes3$HMTi)
+write.csv(GenesSignatureHDACi, "GenesSignatureHDACi.csv")
+
+
+UniqueGenesHDMTi <- setdiff(genes3$HDMTi, genes3$CommonToAll)
+UniqueGenesHDMTia <- setdiff(UniqueGenesHDMTi, genes3$HDACi)
+UniqueGenesHDMTib <- setdiff(UniqueGenesHDMTia, genes3$HATi)
+GenesSignatureHDMTi <- setdiff(UniqueGenesHDMTib, genes3$HMTi)
+write.csv(GenesSignatureHDMTi, "GenesSignatureHDMTi.csv")
+
+UniqueGenesHMTi <- setdiff(genes3$HMTi, genes3$CommonToAll)
+UniqueGenesHMTia <- setdiff(UniqueGenesHMTi, genes3$HDACi)
+UniqueGenesHMTib <- setdiff(UniqueGenesHMTia, genes3$HDMTi)
+GenesSignatureHMTi <- setdiff(UniqueGenesHMTib, genes3$HATi)
+write.csv(GenesSignatureHMTi, "GenesSignatureHMTi.csv")
+
+#####Extra code for fixing output data sets
 dds
 copydds <- dds
 rownames(copydds) <- sapply( strsplit( rownames(copydds), split="\\." ), "[", 1 )
@@ -185,61 +296,5 @@ resSig$entrez <- genemap$entrezgene[ idx ]
 resSig$hgnc_symbol <- genemap$hgnc_symbol[ idx ]
 head(resSig[ order(resSig$log2FoldChange), ])
 write.csv(resSig, file = "D:/Batch3_4_Alignment/Batch234HighDose/AllgrpCAH/HMTi/res_HMTi_withVC.csv")
-##################################################################################################
-library(DESeq2)
-library(limma)
-library(VennDiagram)
-setwd("D:/Batch3_4_Alignment/Batch234HighDose/AllgrpCAH/")
-genes <- read.csv("SigGenes_withVC.csv")
-venn.plot <- venn.diagram(list(genes$HATi, genes$HDACi), NULL, fill=c("red", "green"), alpha=c(0.5,0.5), cex = 2, cat.fontface=4, category.names=c("HATi", "HDACi"))
-grid.draw(venn.plot)
-IntersectHATi_HDACi <- intersect(genes$HATi, genes$HDACi)
-write.csv(vennIntersectHATi_HDACi, "vennIntersectHATi_HDACi.csv")
-UniqueHATi_HDACi <- unique(genes$HATi, genes$HDACi)
-write.csv(UniqueHATi_HDACi, "UniqueHATi_HDACi.csv")
-UniqueHMTi <- setdiff(genes1$PNE, genes1$HDMTi)
-
-
-dev.off()
-venn.plot <- venn.diagram(list(genes$HATi, genes$HDACi, genes$HDACa, genes$HMTi, genes$HDMTi), NULL, fill=c("red", "green", "pink", "yellow", "blue"), alpha=c(0.3,0.3,0.3,0.3,0.3), cex = 1.5, cat.fontface=4, category.names=c("HATi", "HDACi", "HDACa","HMTi", "HDMTi"), cat.dist = c(0.07, 0.07, 0.07,0.07, 0.07))
-
-genes1 <- read.csv("SignificantGenes.csv")
-head(genes1)
-genes1 <- na.omit(genes1)
-head(genes1)
-venn.plot <- venn.diagram(list(genes1$PNE, genes1$HDACi), NULL, fill=c("red", "green"), alpha=c(0.5,0.5), cex = 2, cat.fontface=4, category.names=c("PNE", "HDACi"))
-
-UniqueGenesHATi <- setdiff(genes3$HATi, genes3$CommonToAll)
-UniqueGenesHATia <- setdiff(UniqueGenesHATi, genes3$HDACi)
-UniqueGenesHATib <- setdiff(UniqueGenesHATia, genes3$HDMTi)
-GenesSignatureHATi <- setdiff(UniqueGenesHATib, genes3$HMTi)
-write.csv(GenesSignatureHATi, "GenesSignatureHATi.csv")
-
-
-
-UniqueGenesHDACi <- setdiff(genes3$HDACi, genes3$CommonToAll)
-UniqueGenesHDACia <- setdiff(UniqueGenesHDACi, genes3$HATi)
-UniqueGenesHDACib <- setdiff(UniqueGenesHDACia, genes3$HDMTi)
-GenesSignatureHDACi <- setdiff(UniqueGenesHDACib, genes3$HMTi)
-write.csv(GenesSignatureHDACi, "GenesSignatureHDACi.csv")
-
-
-UniqueGenesHDMTi <- setdiff(genes3$HDMTi, genes3$CommonToAll)
-UniqueGenesHDMTia <- setdiff(UniqueGenesHDMTi, genes3$HDACi)
-UniqueGenesHDMTib <- setdiff(UniqueGenesHDMTia, genes3$HATi)
-GenesSignatureHDMTi <- setdiff(UniqueGenesHDMTib, genes3$HMTi)
-write.csv(GenesSignatureHDMTi, "GenesSignatureHDMTi.csv")
-
-UniqueGenesHMTi <- setdiff(genes3$HMTi, genes3$CommonToAll)
-UniqueGenesHMTia <- setdiff(UniqueGenesHMTi, genes3$HDACi)
-UniqueGenesHMTib <- setdiff(UniqueGenesHMTia, genes3$HDMTi)
-GenesSignatureHMTi <- setdiff(UniqueGenesHMTib, genes3$HATi)
-write.csv(GenesSignatureHMTi, "GenesSignatureHMTi.csv")
-
-
-
-
-
-
 
 
