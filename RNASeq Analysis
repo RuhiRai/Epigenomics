@@ -1,0 +1,245 @@
+######https://www.bioconductor.org/help/workflows/rnaseqGene/
+######http://www.gettinggeneticsdone.com/2015/12/tutorial-rna-seq-differential.html
+######https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4972086/
+######http://biocluster.ucr.edu/~rkaundal/workshops/R_mar2016/RNAseq.html
+######https://bioc.ism.ac.jp/packages/2.14/bioc/vignettes/DESeq2/inst/doc/beginner.pdf
+######https://hms-dbmi.github.io/scw/differential-expression.html
+
+
+
+
+setwd("D:/Batch3_4_Alignment")
+indir <- file.path(".")
+list.files(indir)
+
+csvfile <- file.path(indir, "SampleSheetBatch234_HMTi_withVC_CAH.csv")
+
+sampleTable <- read.csv(csvfile, row.names = 1)
+sampleTable
+filenames <- file.path(indir, paste0(sampleTable$SampleID, ".alignments.bam"))
+file.exists(filenames)
+library("Rsamtools")
+bamfiles <- BamFileList(filenames)
+seqinfo(bamfiles[1])
+#seqlevelsStyle(bamfiles)
+library("GenomicFeatures")
+gtffile <- file.path(indir,"gencodev26annotation.gtf")
+txdb <- makeTxDbFromGFF(gtffile, format = "gtf", circ_seqs = character())
+txdb
+ebg <- exonsBy(txdb, by="gene")
+ebg
+library("GenomicAlignments")
+library("BiocParallel")
+register(SerialParam())
+se <- summarizeOverlaps(features=ebg, reads=bamfiles,
+mode="Union",
+singleEnd=TRUE,
+ignore.strand=TRUE,
+fragments=FALSE )
+se
+colData(se)
+colData(se) <- DataFrame(sampleTable)
+colData(se)
+#dds <- DESeqDataSet(se, design = ~ Description + SampleID)
+library(DESeq2)
+dds <- DESeqDataSet(se, design = ~ EpiMechanism)
+countdata <- assay(se)
+head(countdata, 3)
+dds <- dds[ rowSums(counts(dds)) > 1, ]
+nrow(dds)
+dds = DESeq(dds)
+dds
+#copydds <- dds
+rownames(dds) <- sapply( strsplit( rownames(dds), split="\\." ), "[", 1 )
+#copydds
+library(biomaRt)
+mart <- useMart(biomart = 'ensembl', dataset = 'hsapiens_gene_ensembl')
+bm.query <- getBM(values=rownames(dds),attributes=c("ensembl_gene_id", "external_gene_name"),filters=c("ensembl_gene_id"),mart=mart)
+genes <- list(ids=rownames(dds),names=bm.query[match(rownames(dds), bm.query$ensembl_gene_id),]$external_gene_name)
+genes
+rownames(dds) <- make.unique(as.character(genes$names))
+dds
+
+cell.labels <- substr(colnames(dds),12,18)
+cell.labels
+colnames(dds)
+colnames(dds) <- cell.labels
+colnames(dds)
+dds
+rld <- rlog(dds, blind = FALSE)
+head(assay(rld), 3)
+library( "genefilter" )
+topVarGenes <- head(order(rowVars(assay(rld)), decreasing = TRUE), 50)
+library(pheatmap)
+mat  <- assay(rld)[ topVarGenes, ]
+mat  <- mat - rowMeans(mat)
+anno <- as.data.frame(colData(rld)[, c("EpiMechanism","Dose")])
+pheatmap(mat, annotation_col = anno)
+library( "gplots" )
+library( "RColorBrewer" )
+
+heatmapData<-heatmap.2( assay(rld)[ topVarGenes, ],scale="row",
+trace="none",dendrogram="column",
+col = colorRampPalette( rev(brewer.pal(9, "RdBu")) )(255), margins = c(7,7), cexCol = .7, cexRow = .5, returnData = TRUE)
+heatmapinfo <- heatmapData$carpet
+write.csv(heatmapinfo, file = "D:/Batch3_4_Alignment/Batch234HighDose/AllgrpCAH/HMTi/top50variableGenesHMTi_withVC.csv")
+HATi_noVC_CAH.csv
+###############################################################
+dds <- DESeqDataSet(se, design = ~ EpiMechanism)
+countdata <- assay(se)
+head(countdata, 3)
+dds <- dds[ rowSums(counts(dds)) > 1, ]
+nrow(dds)
+dds = DESeq(dds)
+dds
+res = results(dds)
+res = res[order(res$pvalue),]
+summary(res)
+res.05 <- results(dds, alpha = 0.05)
+table(res.05$padj < 0.05)
+sum(res$pvalue < 0.05, na.rm=TRUE)
+sum(res$padj < 0.1, na.rm=TRUE)
+resSig <- subset(res, padj < 0.1)
+library(dplyr)
+library("AnnotationDbi")
+library("org.Hs.eg.db")
+resSig$ensembl <- sapply( strsplit( rownames(resSig), split="\\." ), "[", 1 )
+head(resSig)
+ensembl = useMart( "ensembl", dataset = "hsapiens_gene_ensembl" )
+genemap <- getBM( attributes = c("ensembl_gene_id", "entrezgene", "hgnc_symbol"),
+filters = "ensembl_gene_id",
+values = resSig$ensembl,
+mart = ensembl )
+idx <- match( resSig$ensembl, genemap$ensembl_gene_id )
+resSig$entrez <- genemap$entrezgene[ idx ]
+resSig$hgnc_symbol <- genemap$hgnc_symbol[ idx ]
+head(resSig[ order(resSig$log2FoldChange), ])
+
+downRegGenes <- resSig[order(resSig$log2FoldChange), ]
+write.csv(downRegGenes, file = "D:/Batch3_4_Alignment/Batch234HighDose/AllgrpCAH/HMTi/HMTi_withVCDownRegGenes.csv")
+upRegGenes <- resSig[order(resSig$log2FoldChange, decreasing = TRUE), ]
+write.csv(upRegGenes, file = "D:/Batch3_4_Alignment/Batch234HighDose/AllgrpCAH/HMTi/HMTi_withVCUpRegGenes.csv")
+write.csv(resSig, file = "D:/Batch3_4_Alignment/Batch234HighDose/AllgrpCAH/resPNE_HDACiwithVC.csv")
+
+##########################################################################
+
+library(ggplot2)
+ggplot(pcaData, aes(PC1, PC2, color=EpiMechanism, shape=Dose)) +
+geom_point(size=3) +
+xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+ylab(paste0("PC2: ",percentVar[2],"% variance")) +
+coord_fixed()
+write.csv(pcaData, file = "pcaData.csv")
+
+pcaData <- plotPCA(rld, intgroup=c("EpiMechanism", "Dose"), returnData=TRUE)
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+
+dds
+copydds <- dds
+rownames(copydds) <- sapply( strsplit( rownames(copydds), split="\\." ), "[", 1 )
+copydds
+mart <- useMart(biomart = 'ensembl', dataset = 'hsapiens_gene_ensembl')
+bm.query <- getBM(values=rownames(copydds),attributes=c("ensembl_gene_id", "external_gene_name"),filters=c("ensembl_gene_id"),mart=mart)
+genes <- list(ids=rownames(copydds),names=bm.query[match(rownames(copydds), bm.query$ensembl_gene_id),]$external_gene_name)
+genes
+rownames(copydds) <- make.unique(as.character(genes$names))
+copydds
+cell.labels <- substr(colnames(copydds),11,18)
+cell.labels
+cell.labels <- substr(colnames(copydds),12,18)
+cell.labels
+colnames(copydds)
+colnames(copydds) <- cell.labels
+colnames(copydds)
+copydds
+
+rld
+copyrld <- rld
+rownames(copyrld) <- sapply( strsplit( rownames(copyrld), split="\\." ), "[", 1 )
+copyrld
+mart <- useMart(biomart = 'ensembl', dataset = 'hsapiens_gene_ensembl')
+bm.query <- getBM(values=rownames(copyrld),attributes=c("ensembl_gene_id", "external_gene_name"),filters=c("ensembl_gene_id"),mart=mart)
+genes <- list(ids=rownames(copyrld),names=bm.query[match(rownames(copyrld), bm.query$ensembl_gene_id),]$external_gene_name)
+genes
+rownames(copyrld) <- make.unique(as.character(genes$names))
+copyrld
+
+cell.labels <- substr(colnames(copyrld),12,18)
+cell.labels
+colnames(copyrld)
+colnames(copyrld) <- cell.labels
+colnames(copyrld)
+copyrld
+#################################################################################################
+setwd("D:/Batch3_4_Alignment/Batch234HighDose/AllgrpCAH/HMTi")
+res <- read.csv("resHMTi_withVC.csv")
+resSig <- subset(res, padj < 0.1)
+rownames(resSig) <- resSig[,1]
+resSig$ensembl <- sapply( strsplit( rownames(resSig), split="\\." ), "[", 1 )
+genemap <- getBM( attributes = c("ensembl_gene_id", "entrezgene", "hgnc_symbol"),
+                  filters = "ensembl_gene_id",
+                  values = resSig$ensembl,
+                  mart = ensembl )
+idx <- match( resSig$ensembl, genemap$ensembl_gene_id )
+resSig$entrez <- genemap$entrezgene[ idx ]
+resSig$hgnc_symbol <- genemap$hgnc_symbol[ idx ]
+head(resSig[ order(resSig$log2FoldChange), ])
+write.csv(resSig, file = "D:/Batch3_4_Alignment/Batch234HighDose/AllgrpCAH/HMTi/res_HMTi_withVC.csv")
+##################################################################################################
+library(DESeq2)
+library(limma)
+library(VennDiagram)
+setwd("D:/Batch3_4_Alignment/Batch234HighDose/AllgrpCAH/")
+genes <- read.csv("SigGenes_withVC.csv")
+venn.plot <- venn.diagram(list(genes$HATi, genes$HDACi), NULL, fill=c("red", "green"), alpha=c(0.5,0.5), cex = 2, cat.fontface=4, category.names=c("HATi", "HDACi"))
+grid.draw(venn.plot)
+IntersectHATi_HDACi <- intersect(genes$HATi, genes$HDACi)
+write.csv(vennIntersectHATi_HDACi, "vennIntersectHATi_HDACi.csv")
+UniqueHATi_HDACi <- unique(genes$HATi, genes$HDACi)
+write.csv(UniqueHATi_HDACi, "UniqueHATi_HDACi.csv")
+UniqueHMTi <- setdiff(genes1$PNE, genes1$HDMTi)
+
+
+dev.off()
+venn.plot <- venn.diagram(list(genes$HATi, genes$HDACi, genes$HDACa, genes$HMTi, genes$HDMTi), NULL, fill=c("red", "green", "pink", "yellow", "blue"), alpha=c(0.3,0.3,0.3,0.3,0.3), cex = 1.5, cat.fontface=4, category.names=c("HATi", "HDACi", "HDACa","HMTi", "HDMTi"), cat.dist = c(0.07, 0.07, 0.07,0.07, 0.07))
+
+genes1 <- read.csv("SignificantGenes.csv")
+head(genes1)
+genes1 <- na.omit(genes1)
+head(genes1)
+venn.plot <- venn.diagram(list(genes1$PNE, genes1$HDACi), NULL, fill=c("red", "green"), alpha=c(0.5,0.5), cex = 2, cat.fontface=4, category.names=c("PNE", "HDACi"))
+
+UniqueGenesHATi <- setdiff(genes3$HATi, genes3$CommonToAll)
+UniqueGenesHATia <- setdiff(UniqueGenesHATi, genes3$HDACi)
+UniqueGenesHATib <- setdiff(UniqueGenesHATia, genes3$HDMTi)
+GenesSignatureHATi <- setdiff(UniqueGenesHATib, genes3$HMTi)
+write.csv(GenesSignatureHATi, "GenesSignatureHATi.csv")
+
+
+
+UniqueGenesHDACi <- setdiff(genes3$HDACi, genes3$CommonToAll)
+UniqueGenesHDACia <- setdiff(UniqueGenesHDACi, genes3$HATi)
+UniqueGenesHDACib <- setdiff(UniqueGenesHDACia, genes3$HDMTi)
+GenesSignatureHDACi <- setdiff(UniqueGenesHDACib, genes3$HMTi)
+write.csv(GenesSignatureHDACi, "GenesSignatureHDACi.csv")
+
+
+UniqueGenesHDMTi <- setdiff(genes3$HDMTi, genes3$CommonToAll)
+UniqueGenesHDMTia <- setdiff(UniqueGenesHDMTi, genes3$HDACi)
+UniqueGenesHDMTib <- setdiff(UniqueGenesHDMTia, genes3$HATi)
+GenesSignatureHDMTi <- setdiff(UniqueGenesHDMTib, genes3$HMTi)
+write.csv(GenesSignatureHDMTi, "GenesSignatureHDMTi.csv")
+
+UniqueGenesHMTi <- setdiff(genes3$HMTi, genes3$CommonToAll)
+UniqueGenesHMTia <- setdiff(UniqueGenesHMTi, genes3$HDACi)
+UniqueGenesHMTib <- setdiff(UniqueGenesHMTia, genes3$HDMTi)
+GenesSignatureHMTi <- setdiff(UniqueGenesHMTib, genes3$HATi)
+write.csv(GenesSignatureHMTi, "GenesSignatureHMTi.csv")
+
+
+
+
+
+
+
+
